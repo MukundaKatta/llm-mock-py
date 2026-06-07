@@ -1,10 +1,13 @@
 import pytest
 from llm_mock import MockLLM, MockCall
 
+assert MockCall  # re-exported public type
+
 
 # ---------------------------------------------------------------------------
 # Basic cycling
 # ---------------------------------------------------------------------------
+
 
 def test_single_response_cycles():
     m = MockLLM(responses=["Hello!"])
@@ -31,6 +34,7 @@ def test_default_response_when_none_given():
 # Role in response
 # ---------------------------------------------------------------------------
 
+
 def test_response_has_assistant_role():
     m = MockLLM(responses=["Hi"])
     r = m.chat([{"role": "user", "content": "hey"}])
@@ -40,6 +44,7 @@ def test_response_has_assistant_role():
 # ---------------------------------------------------------------------------
 # Call recording
 # ---------------------------------------------------------------------------
+
 
 def test_calls_recorded():
     m = MockLLM(responses=["ok"])
@@ -80,6 +85,7 @@ def test_calls_are_snapshot_not_live():
 # Assertions
 # ---------------------------------------------------------------------------
 
+
 def test_assert_called_n_times_passes():
     m = MockLLM(responses=["a"])
     m.chat([])
@@ -116,6 +122,7 @@ def test_assert_not_called_fails_after_call():
 # Reset
 # ---------------------------------------------------------------------------
 
+
 def test_reset_clears_calls():
     m = MockLLM(responses=["A", "B"])
     m.chat([])
@@ -134,6 +141,7 @@ def test_reset_restarts_cycle():
 # ---------------------------------------------------------------------------
 # Keyword matching
 # ---------------------------------------------------------------------------
+
 
 def test_keyword_match_takes_priority():
     m = MockLLM(responses=["default"], keyword_map={"error": "Error response"})
@@ -170,6 +178,7 @@ def test_keyword_dict_response():
 # Callable interface
 # ---------------------------------------------------------------------------
 
+
 def test_callable_interface():
     m = MockLLM(responses=["callable ok"])
     r = m([{"role": "user", "content": "test"}])
@@ -179,6 +188,7 @@ def test_callable_interface():
 # ---------------------------------------------------------------------------
 # MockCall fields
 # ---------------------------------------------------------------------------
+
 
 def test_mock_call_index():
     m = MockLLM(responses=["a", "b"])
@@ -199,7 +209,56 @@ def test_mock_call_messages_stored():
 # Empty messages
 # ---------------------------------------------------------------------------
 
+
 def test_empty_messages_list():
     m = MockLLM(responses=["ok"])
     r = m.chat([])
     assert r["content"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Recorded messages are a snapshot (caller mutation isolation)
+# ---------------------------------------------------------------------------
+
+
+def test_recorded_messages_unaffected_by_caller_mutation():
+    m = MockLLM(responses=["a"])
+    msgs = [{"role": "user", "content": "first"}]
+    m.chat(msgs)
+    msgs.append({"role": "user", "content": "added later"})
+    assert m.calls[0].messages == [{"role": "user", "content": "first"}]
+    assert m.last_messages() == [{"role": "user", "content": "first"}]
+
+
+def test_recorded_message_dict_unaffected_by_caller_mutation():
+    m = MockLLM(responses=["a"])
+    msg = {"role": "user", "content": "original"}
+    m.chat([msg])
+    msg["content"] = "mutated"
+    assert m.calls[0].messages[0]["content"] == "original"
+
+
+# ---------------------------------------------------------------------------
+# Empty/explicit defaults
+# ---------------------------------------------------------------------------
+
+
+def test_empty_responses_falls_back_to_default():
+    m = MockLLM(responses=[])
+    r = m.chat([])
+    assert isinstance(r["content"], str) and len(r["content"]) > 0
+
+
+def test_non_string_content_ignored_in_keyword_scan():
+    # Non-string content (e.g. multimodal blocks) must not crash keyword scan.
+    m = MockLLM(responses=["fallback"], keyword_map={"hi": "matched"})
+    r = m.chat([{"role": "user", "content": [{"type": "image"}]}])
+    assert r["content"] == "fallback"
+
+
+def test_keyword_match_index_field_records_current_index():
+    m = MockLLM(responses=["A", "B"], keyword_map={"err": "E"})
+    m.chat([])  # consumes A, index -> 1
+    m.chat([{"role": "user", "content": "err"}])  # keyword match, no advance
+    assert m.calls[1].response == "E"
+    assert m.calls[1].index == 1  # index unchanged by keyword match

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -55,17 +55,19 @@ class MockLLM:
 
     def chat(self, messages: list[dict], **_kwargs: Any) -> dict:
         """Return the next mock response. Records the call."""
-        response = self._pick_response(messages)
+        response, matched_keyword = self._pick_response(messages)
         if isinstance(response, str):
             content = response
         else:
             content = response.get("content", "Mock response.")
 
-        call = MockCall(messages=messages, response=content, index=self._index)
+        # Store a snapshot so later caller mutations don't alter the record.
+        recorded = [dict(m) if isinstance(m, dict) else m for m in messages]
+        call = MockCall(messages=recorded, response=content, index=self._index)
         self._calls.append(call)
 
         # Advance cycle index (keyword matches don't advance it)
-        if not self._matched_keyword(messages):
+        if not matched_keyword:
             self._index = (self._index + 1) % len(self._responses)
 
         return {"role": "assistant", "content": content}
@@ -81,9 +83,7 @@ class MockLLM:
 
     def assert_called_n_times(self, n: int) -> None:
         if len(self._calls) != n:
-            raise AssertionError(
-                f"Expected {n} call(s), got {len(self._calls)}"
-            )
+            raise AssertionError(f"Expected {n} call(s), got {len(self._calls)}")
 
     def assert_called_once(self) -> None:
         self.assert_called_n_times(1)
@@ -99,23 +99,19 @@ class MockLLM:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _matched_keyword(self, messages: list[dict]) -> bool:
-        combined = " ".join(
-            m.get("content", "") for m in messages if isinstance(m.get("content"), str)
-        ).lower()
-        for kw in self._keyword_map:
-            if kw.lower() in combined:
-                return True
-        return False
+    def _pick_response(self, messages: list[dict]) -> tuple[str | dict, bool]:
+        """Pick a response, returning ``(response, matched_keyword)``.
 
-    def _pick_response(self, messages: list[dict]) -> str | dict:
+        Keyword matches take priority over index cycling and do not advance
+        the cycle index. The messages are scanned only once.
+        """
         combined = " ".join(
             m.get("content", "") for m in messages if isinstance(m.get("content"), str)
         ).lower()
         for kw, resp in self._keyword_map.items():
             if kw.lower() in combined:
-                return resp
-        return self._responses[self._index % len(self._responses)]
+                return resp, True
+        return self._responses[self._index % len(self._responses)], False
 
 
 __all__ = ["MockLLM", "MockCall"]
